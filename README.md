@@ -36,7 +36,7 @@ apt install git -y
 ### 4️⃣ Clone repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/socks5-cluster.git
+git clone https://github.com/EvOrlov/socks5-cluster.git
 cd socks5-cluster
 ```
 
