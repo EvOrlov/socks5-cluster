@@ -173,10 +173,11 @@ def test_proxy(ip, port, user, password):
 
 
 def check_system_health():
-    mem = psutil.virtual_memory()
-    cpu = psutil.cpu_percent(interval=0.1)
-    print(f"[*] Нагрузка: CPU {cpu}% | RAM {mem.used/1024/1024:.0f}/{mem.total/1024/1024:.0f}MB")
-    return cpu < 85 and mem.available > 300 * 1024 * 1024  # 300MB свободно
+    # mem = psutil.virtual_memory()
+    # cpu = psutil.cpu_percent(interval=0.1)
+    # print(f"[*] Нагрузка: CPU {cpu}% | RAM {mem.used/1024/1024:.0f}/{mem.total/1024/1024:.0f}MB")
+    # return cpu < 85 and mem.available > 300 * 1024 * 1024  # 300MB свободно
+    pass
 
 
 def verify_proxies(credentials):
@@ -210,7 +211,7 @@ def launch_containers(credentials):
         return False
 
     for i in range(CONTAINER_COUNT):
-        if not check_system_limits() and check_system_health():
+        if not check_system_limits():
             print("[!] Достигнуты системные лимиты. Жду 30 сек...")
             time.sleep(30)
             continue
