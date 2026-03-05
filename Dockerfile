@@ -5,6 +5,8 @@ RUN apk update && apk add --no-cache \
     bash \
     shadow \
     curl \
+    iproute2 \
+    net-tools \
     && rm -rf /var/cache/apk/*
 
 COPY entrypoint.sh /entrypoint.sh
