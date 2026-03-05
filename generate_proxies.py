@@ -4,7 +4,7 @@ import string
 import subprocess
 import socket
 import time
-import psutil
+# import psutil
 from datetime import datetime
 
 # Конфигурация
@@ -12,7 +12,7 @@ BASE_PORT = 1080
 PROXIES_PER_CONTAINER = 250
 CONTAINER_COUNT = 12
 DOCKER_IMAGE = "dante-proxy"
-IP_ADDRESS = "192.177.26.19"
+IP_ADDRESS = "103.27.156.97"
 PROXY_OUTPUT = "working_proxies.txt"
 
 # Лимиты ресурсов
