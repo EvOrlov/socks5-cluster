@@ -4,223 +4,258 @@ import string
 import subprocess
 import socket
 import time
-# import psutil
-from datetime import datetime
+import urllib.request
+import re
 
-# Конфигурация
-BASE_PORT = 1080
-PROXIES_PER_CONTAINER = 250
-CONTAINER_COUNT = 12
+
+# -------------------------------
+# ENV LOADER
+# -------------------------------
+
+def load_env(env_file="cluster.env"):
+    config = {}
+
+    if not os.path.exists(env_file):
+        print(f"[!] Config file '{env_file}' not found. Using defaults.")
+        return config
+
+    with open(env_file) as f:
+        for line in f:
+            line = line.strip()
+
+            if not line or line.startswith("#"):
+                continue
+
+            if "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            config[key.strip()] = value.strip()
+
+    return config
+
+
+config = load_env()
+
+# -------------------------------
+# CONFIGURATION
+# -------------------------------
+
+BASE_PORT = int(config.get("START_PORT", 1080))
+PROXIES_PER_CONTAINER = int(config.get("PROXIES_PER_CONTAINER", 250))
+CONTAINER_COUNT = int(config.get("CONTAINER_COUNT", 12))
+
+USERNAME_PREFIX = config.get("USERNAME_PREFIX", "user")
+PASSWORD_LENGTH = int(config.get("PASSWORD_LENGTH", 8))
+
+MEMORY_LIMIT = config.get("CONTAINER_MEMORY", "30m")
+CPU_LIMIT = config.get("CONTAINER_CPU", "0.15")
+
+STARTUP_DELAY = int(config.get("STARTUP_DELAY", 15))
+INITIALIZATION_TIME = int(config.get("INITIALIZATION_TIME", 60))
+
+VERIFY_SERVICES = config.get(
+    "VERIFY_SERVICES",
+    "https://api.ipify.org"
+).split(",")
+
 DOCKER_IMAGE = "dante-proxy"
-IP_ADDRESS = "103.27.156.97"
 PROXY_OUTPUT = "working_proxies.txt"
 
-# Лимиты ресурсов
-MEMORY_LIMIT = "30m"
-CPU_LIMIT = "0.15"
-STARTUP_DELAY = 15
-INITIALIZATION_TIME = 60
+IP_ADDRESS = None
 
 
-def full_docker_cleanup():
-    """Полная очистка всех Docker-объектов"""
-    print("[*] Полная очистка Docker-окружения...")
+# -------------------------------
+# IP DETECTION
+# -------------------------------
 
-    # Получаем все контейнеры
-    result = subprocess.run("docker ps -aq", shell=True, capture_output=True, text=True)
-    container_ids = result.stdout.strip().splitlines()
+def detect_public_ip():
+    print("[*] Detecting public IP...")
 
-    if container_ids:
-        print(f"[.] Остановка {len(container_ids)} контейнеров...")
-        subprocess.run(f"docker stop {' '.join(container_ids)}", shell=True)
+    for service in VERIFY_SERVICES:
+        service = service.strip()
 
-        # Ждём до 10 секунд, пока все контейнеры не остановятся
-        for i in range(10):
-            result = subprocess.run("docker ps -q", shell=True, capture_output=True, text=True)
-            if not result.stdout.strip():
-                break
-            print(f"[.] Ожидание остановки контейнеров ({i+1}/10)...")
-            time.sleep(1)
-
-        # Теперь можно удалять
-        print("[.] Удаление остановленных контейнеров...")
-        subprocess.run(f"docker rm -f {' '.join(container_ids)}", shell=True)
-
-    # Остальное – очистка мусора
-    cleanup_cmds = [
-        "docker network prune -f",
-        "docker image prune -af",
-        "docker volume prune -f",
-        "docker system prune -af",
-        "sync; echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null"
-    ]
-
-    for cmd in cleanup_cmds:
-        subprocess.run(cmd, shell=True)
-
-    print("[+] Docker-окружение полностью очищено")
-
-
-def reset_network():
-    """Сброс сетевого стека Docker"""
-    subprocess.run("sudo systemctl restart docker", shell=True)
-    # subprocess.run("sudo iptables -t nat -F", shell=True)
-    time.sleep(5)
-
-
-def generate_credentials():
-    """Генерирует учетные данные со свободными портами"""
-    ports = find_free_ports(PROXIES_PER_CONTAINER * CONTAINER_COUNT, BASE_PORT)
-    return [
-        (f"user_{''.join(random.choices(string.ascii_letters, k=6))}",
-         ''.join(random.choices(string.ascii_letters + string.digits, k=10)),
-         port)
-        for port in ports
-    ]
-
-
-def cleanup_environment():
-    """Полная очистка окружения"""
-    print("[*] Очистка старых контейнеров...")
-    full_docker_cleanup()
-    reset_network()
-
-    print("[*] Удаление временных файлов...")
-    for i in range(CONTAINER_COUNT):
         try:
-            os.remove(f"users_{i}.txt")
-        except FileNotFoundError:
-            pass
+            with urllib.request.urlopen(service, timeout=5) as response:
+                ip = response.read().decode().strip()
+
+                if re.match(r"\d+\.\d+\.\d+\.\d+", ip):
+                    print(f"[+] Public IP detected: {ip}")
+                    return ip
+
+        except Exception:
+            continue
+
+    raise RuntimeError("Unable to detect public IP from verification services")
 
 
-def build_users_files(credentials):
-    """Создает файлы с пользователями для каждого контейнера"""
-    print("[*] Генерация users_*.txt")
-    for i in range(CONTAINER_COUNT):
-        batch = credentials[i * PROXIES_PER_CONTAINER:(i + 1) * PROXIES_PER_CONTAINER]
-        with open(f"users_{i}.txt", "w") as f:
-            for user, pwd, port in batch:
-                f.write(f"{user}:{pwd}:{port}\n")
+def detect_local_ip():
+
+    try:
+        result = subprocess.run(
+            "hostname -I",
+            shell=True,
+            capture_output=True,
+            text=True
+        )
+
+        local_ip = result.stdout.strip().split()[0]
+        print(f"[+] Local interface IP: {local_ip}")
+        return local_ip
+
+    except Exception:
+        return "unknown"
 
 
-def find_free_ports(count, start_port):
-    """Находит count свободных портов"""
-    free_ports = []
-    current_port = start_port
+def check_nat(public_ip, local_ip):
 
-    while len(free_ports) < count:
-        if is_port_free(current_port):
-            free_ports.append(current_port)
-        current_port += 1
-        if current_port > 65535:
-            raise ValueError("Не удалось найти достаточное количество свободных портов")
+    if local_ip == "unknown":
+        return
 
-    return free_ports
+    if public_ip != local_ip:
 
+        print("\n[WARNING] Your server may be behind NAT.\n")
+
+        print(f"Public IP : {public_ip}")
+        print(f"Local IP  : {local_ip}\n")
+
+        print("Incoming connections to proxy ports may fail.")
+        print("Check if your hosting provider requires enabling a public IP.\n")
+
+
+# -------------------------------
+# PORT DISCOVERY
+# -------------------------------
 
 def is_port_free(port):
-    """Проверяет доступность порта"""
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(1)
         return s.connect_ex(("127.0.0.1", port)) != 0
 
 
-def check_system_limits():
-    """Проверяет доступные системные ресурсы"""
-    # Проверка свободных файловых дескрипторов
-    with open("/proc/sys/fs/file-nr") as f:
-        used = int(f.read().split()[0])
-        if used > 0.8 * 2097152:  # 80% от file-max
-            return False
+def find_free_ports(count, start_port):
 
-    # Проверка количества процессов
-    proc_count = int(subprocess.run("ps -e --no-headers | wc -l",
-                                    shell=True, capture_output=True).stdout)
-    if proc_count > 0.7 * 65536:  # 70% от pid_max
-        return False
+    free_ports = []
+    current_port = start_port
 
-    return True
+    while len(free_ports) < count:
 
+        if is_port_free(current_port):
+            free_ports.append(current_port)
+
+        current_port += 1
+
+        if current_port > 65535:
+            raise RuntimeError("Unable to allocate enough ports")
+
+    return free_ports
+
+
+# -------------------------------
+# PROXY GENERATION
+# -------------------------------
+
+def generate_credentials():
+
+    print("[*] Generating proxy credentials...")
+
+    ports = find_free_ports(PROXIES_PER_CONTAINER * CONTAINER_COUNT, BASE_PORT)
+
+    credentials = []
+
+    for port in ports:
+
+        username = f"{USERNAME_PREFIX}_{''.join(random.choices(string.ascii_letters, k=6))}"
+
+        password = ''.join(
+            random.choices(string.ascii_letters + string.digits, k=PASSWORD_LENGTH)
+        )
+
+        credentials.append((username, password, port))
+
+    return credentials
+
+
+def build_users_files(credentials):
+
+    print("[*] Creating users_*.txt files")
+
+    for i in range(CONTAINER_COUNT):
+
+        batch = credentials[i * PROXIES_PER_CONTAINER:(i + 1) * PROXIES_PER_CONTAINER]
+
+        with open(f"users_{i}.txt", "w") as f:
+
+            for user, pwd, port in batch:
+                f.write(f"{user}:{pwd}:{port}\n")
+
+
+# -------------------------------
+# DOCKER CLEANUP
+# -------------------------------
+
+def cleanup_cluster():
+
+    print("[*] Cleaning previous cluster containers...")
+
+    result = subprocess.run(
+        "docker ps -a --filter 'name=socks-batch' --format '{{.ID}}'",
+        shell=True,
+        capture_output=True,
+        text=True
+    )
+
+    containers = result.stdout.strip().splitlines()
+
+    if containers:
+
+        subprocess.run(
+            f"docker rm -f {' '.join(containers)}",
+            shell=True
+        )
+
+        print(f"[+] Removed {len(containers)} old containers")
+
+    else:
+
+        print("[*] No old containers found")
+
+
+# -------------------------------
+# DOCKER BUILD
+# -------------------------------
 
 def build_docker_image():
-    """Собирает Docker образ"""
-    print("[*] Сборка образа Dante...")
+
+    print("[*] Building Docker image...")
+
     result = subprocess.run(
-        "docker build -t dante-proxy .",
-        shell=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
+        f"docker build -t {DOCKER_IMAGE} .",
+        shell=True
     )
+
     if result.returncode != 0:
-        print("[!] Ошибка сборки образа:")
-        print(result.stderr.decode())
-        return False
-    return True
+
+        raise RuntimeError("Docker image build failed")
 
 
-def test_proxy(ip, port, user, password):
-    """Проверяет работоспособность прокси"""
-    try:
-        result = subprocess.run(
-            ["curl", "-x", f"socks5h://{user}:{password}@{ip}:{port}",
-             "--max-time", "10", "https://api.ipify.org"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL
-        )
-        return result.stdout.decode().strip() == ip
-    except:
-        return False
-
-
-def check_system_health():
-    # mem = psutil.virtual_memory()
-    # cpu = psutil.cpu_percent(interval=0.1)
-    # print(f"[*] Нагрузка: CPU {cpu}% | RAM {mem.used/1024/1024:.0f}/{mem.total/1024/1024:.0f}MB")
-    # return cpu < 85 and mem.available > 300 * 1024 * 1024  # 300MB свободно
-    pass
-
-
-def verify_proxies(credentials):
-    """Проверяет прокси и сохраняет результаты"""
-    print("[*] Тестирование прокси...")
-
-    # Сохраняем ВСЕ прокси
-    with open(PROXY_OUTPUT, "w") as f:
-        for user, pwd, port in credentials:
-            f.write(f"{IP_ADDRESS}:{port}:{user}:{pwd}\n")
-
-    # Проверяем первые 3 из каждого контейнера
-    working = []
-    for i in range(CONTAINER_COUNT):
-        batch = credentials[i * PROXIES_PER_CONTAINER:(i + 1) * PROXIES_PER_CONTAINER]
-        for j, (user, pwd, port) in enumerate(batch[:3]):
-            if test_proxy(IP_ADDRESS, port, user, pwd):
-                print(f"[+] OK: {user}:{pwd}@{IP_ADDRESS}:{port}")
-                working.append(f"{IP_ADDRESS}:{port}:{user}:{pwd}")
-            else:
-                print(f"[-] FAIL: {user}@{IP_ADDRESS}:{port}")
-            time.sleep(0.5)
-
-    print(f"[*] Проверено: {3 * CONTAINER_COUNT} | Рабочих: {len(working)}")
-    print(f"[*] Все {len(credentials)} прокси сохранены в {PROXY_OUTPUT}")
-
+# -------------------------------
+# CONTAINER LAUNCH
+# -------------------------------
 
 def launch_containers(credentials):
-    """Запускает контейнеры с контролем ресурсов"""
-    if not build_docker_image():
-        return False
+
+    build_docker_image()
 
     for i in range(CONTAINER_COUNT):
-        if not check_system_limits():
-            print("[!] Достигнуты системные лимиты. Жду 30 сек...")
-            time.sleep(30)
-            continue
 
         batch = credentials[i * PROXIES_PER_CONTAINER:(i + 1) * PROXIES_PER_CONTAINER]
-        users_file = f"users_{i}.txt"
-        container_name = f"socks-batch-{i}"
 
-        # Запуск контейнера
+        users_file = f"users_{i}.txt"
+
+        container_name = f"socks-batch-{i+1}"
+
         cmd = (
             f"docker run -d --name {container_name} "
             f"--cap-add=NET_RAW --cap-add=NET_ADMIN "
@@ -231,42 +266,134 @@ def launch_containers(credentials):
         )
 
         result = subprocess.run(cmd, shell=True)
+
         if result.returncode == 0:
-            print(f"[+] Контейнер {i + 1}/{CONTAINER_COUNT} запущен (порты {batch[0][2]}-{batch[-1][2]})")
-            time.sleep(STARTUP_DELAY)
+
+            print(
+                f"[+] Container {i+1}/{CONTAINER_COUNT} "
+                f"started (ports {batch[0][2]}-{batch[-1][2]})"
+            )
+
         else:
-            print(f"[!] Ошибка запуска контейнера {i + 1}")
 
-    return True
+            print(f"[!] Failed to start container {i+1}")
+
+        time.sleep(STARTUP_DELAY)
 
 
+# -------------------------------
+# PROXY TEST
+# -------------------------------
 
-
-def main():
-    print("[*] Инициализация генератора прокси...")
-    print(f"[*] Конфигурация: {CONTAINER_COUNT} контейнеров по {PROXIES_PER_CONTAINER} прокси")
+def test_proxy(ip, port, user, password):
 
     try:
-        # Подготовка
+
+        result = subprocess.run(
+
+            [
+                "curl",
+                "-x",
+                f"socks5h://{user}:{password}@{ip}:{port}",
+                "--max-time",
+                "10",
+                "https://api.ipify.org"
+            ],
+
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL
+
+        )
+
+        return result.stdout.decode().strip() == ip
+
+    except Exception:
+
+        return False
+
+
+def verify_proxies(credentials):
+
+    print("[*] Testing proxies...")
+
+    with open(PROXY_OUTPUT, "w") as f:
+
+        for user, pwd, port in credentials:
+
+            f.write(f"{IP_ADDRESS}:{port}:{user}:{pwd}\n")
+
+    working = []
+
+    for i in range(CONTAINER_COUNT):
+
+        batch = credentials[i * PROXIES_PER_CONTAINER:(i + 1) * PROXIES_PER_CONTAINER]
+
+        for user, pwd, port in batch[:3]:
+
+            if test_proxy(IP_ADDRESS, port, user, pwd):
+
+                print(f"[+] OK: {user}:{pwd}@{IP_ADDRESS}:{port}")
+
+                working.append(port)
+
+            else:
+
+                print(f"[-] FAIL: {user}@{IP_ADDRESS}:{port}")
+
+            time.sleep(0.5)
+
+    print(
+        f"\n[*] Checked: {3 * CONTAINER_COUNT} | "
+        f"Working: {len(working)}"
+    )
+
+    print(
+        f"[*] All proxies saved to {PROXY_OUTPUT}"
+    )
+
+
+# -------------------------------
+# MAIN PIPELINE
+# -------------------------------
+
+def main():
+
+    global IP_ADDRESS
+
+    print("\n==============================")
+    print(" SOCKS5 CLUSTER DEPLOYMENT ")
+    print("==============================\n")
+
+    try:
+
+        public_ip = detect_public_ip()
+        local_ip = detect_local_ip()
+
+        check_nat(public_ip, local_ip)
+
+        IP_ADDRESS = public_ip
+
         credentials = generate_credentials()
-        cleanup_environment()
+
+        cleanup_cluster()
+
         build_users_files(credentials)
 
-        # Запуск
-        if not launch_containers(credentials):
-            print("[!] Критическая ошибка при запуске")
-            return
+        launch_containers(credentials)
 
-        print(f"[*] Ожидание инициализации ({INITIALIZATION_TIME} сек)...")
+        print(f"\n[*] Waiting for initialization ({INITIALIZATION_TIME}s)...\n")
+
         time.sleep(INITIALIZATION_TIME)
 
-        # Проверка и сохранение
         verify_proxies(credentials)
 
     except Exception as e:
-        print(f"[!] Ошибка: {str(e)}")
+
+        print(f"[!] Deployment failed: {e}")
+
     finally:
-        print("[*] Завершение работы")
+
+        print("\n[*] Deployment finished\n")
 
 
 if __name__ == "__main__":
