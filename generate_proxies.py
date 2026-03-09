@@ -292,30 +292,15 @@ def launch_containers(credentials):
 
 def test_single_proxy(proxy):
 
-    proxy_url = f"socks5://{proxy}"
+    cmd = f"curl --socks5 {proxy} -s --max-time {VERIFY_TIMEOUT} {VERIFY_SERVICES[0]}"
 
-    for service in VERIFY_SERVICES:
+    result = subprocess.run(
+        cmd,
+        shell=True,
+        capture_output=True
+    )
 
-        try:
-
-            proxy_handler = urllib.request.ProxyHandler({
-                "http": proxy_url,
-                "https": proxy_url
-            })
-
-            opener = urllib.request.build_opener(proxy_handler)
-
-            req = urllib.request.Request(service.strip())
-
-            with opener.open(req, timeout=VERIFY_TIMEOUT) as r:
-                if r.status == 200:
-                    return True
-
-        except Exception:
-            continue
-
-    return False
-
+    return result.returncode == 0
 
 def verify_proxies(credentials):
 
