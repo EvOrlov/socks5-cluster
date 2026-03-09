@@ -6,6 +6,7 @@ import socket
 import time
 import urllib.request
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 # -------------------------------
@@ -63,6 +64,10 @@ DOCKER_IMAGE = "dante-proxy"
 PROXY_OUTPUT = "working_proxies.txt"
 
 IP_ADDRESS = None
+
+TEST_PROXIES_PER_CONTAINER = int(config.get("TEST_PROXIES_PER_CONTAINER", 10))
+VERIFY_TIMEOUT = int(config.get("VERIFY_TIMEOUT", 8))
+VERIFY_CONCURRENCY = int(config.get("VERIFY_CONCURRENCY", 50))
 
 
 # -------------------------------
@@ -285,72 +290,119 @@ def launch_containers(credentials):
 # PROXY TEST
 # -------------------------------
 
-def test_proxy(ip, port, user, password):
+def test_single_proxy(proxy):
 
-    try:
+    proxy_url = f"socks5://{proxy}"
 
-        result = subprocess.run(
+    for service in VERIFY_SERVICES:
 
-            [
-                "curl",
-                "-x",
-                f"socks5h://{user}:{password}@{ip}:{port}",
-                "--max-time",
-                "10",
-                "https://api.ipify.org"
-            ],
+        try:
 
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL
+            proxy_handler = urllib.request.ProxyHandler({
+                "http": proxy_url,
+                "https": proxy_url
+            })
 
-        )
+            opener = urllib.request.build_opener(proxy_handler)
 
-        return result.stdout.decode().strip() == ip
+            req = urllib.request.Request(service.strip())
 
-    except Exception:
+            with opener.open(req, timeout=VERIFY_TIMEOUT) as r:
+                if r.status == 200:
+                    return True
 
-        return False
+        except Exception:
+            continue
+
+    return False
 
 
 def verify_proxies(credentials):
 
-    print("[*] Testing proxies...")
+    print("[*] Testing proxies...\n")
 
-    with open(PROXY_OUTPUT, "w") as f:
+    proxies = []
 
-        for user, pwd, port in credentials:
+    for container_index in range(CONTAINER_COUNT):
 
-            f.write(f"{IP_ADDRESS}:{port}:{user}:{pwd}\n")
+        for i in range(TEST_PROXIES_PER_CONTAINER):
+            index = container_index * PROXIES_PER_CONTAINER + i
+
+            user, password, port = credentials[index]
+
+            proxy = f"{user}:{password}@{IP_ADDRESS}:{port}"
+
+            proxies.append(proxy)
 
     working = []
 
-    for i in range(CONTAINER_COUNT):
+    with ThreadPoolExecutor(max_workers=VERIFY_CONCURRENCY) as executor:
 
-        batch = credentials[i * PROXIES_PER_CONTAINER:(i + 1) * PROXIES_PER_CONTAINER]
+        future_map = {executor.submit(test_single_proxy, p): p for p in proxies}
 
-        for user, pwd, port in batch[:3]:
+        for future in as_completed(future_map):
 
-            if test_proxy(IP_ADDRESS, port, user, pwd):
+            proxy = future_map[future]
 
-                print(f"[+] OK: {user}:{pwd}@{IP_ADDRESS}:{port}")
+            try:
 
-                working.append(port)
+                if future.result():
 
-            else:
+                    print(f"[+] OK: {proxy}")
 
-                print(f"[-] FAIL: {user}@{IP_ADDRESS}:{port}")
+                    working.append(proxy)
 
-            time.sleep(0.5)
+                else:
 
-    print(
-        f"\n[*] Checked: {3 * CONTAINER_COUNT} | "
-        f"Working: {len(working)}"
-    )
+                    print(f"[-] FAIL: {proxy}")
 
-    print(
-        f"[*] All proxies saved to {PROXY_OUTPUT}"
-    )
+            except Exception:
 
+                print(f"[-] ERROR: {proxy}")
+
+    print(f"[*] Checking {len(proxies)} proxies with {VERIFY_CONCURRENCY} workers\n")
+
+    with open(PROXY_OUTPUT, "w") as f:
+
+        for proxy in working:
+            f.write(proxy + "\n")
+
+    print(f"[*] All working proxies saved to {PROXY_OUTPUT}")
+
+# -------------------------------
+# WAIT FOR CONTAINERS READY
+# -------------------------------
+
+def wait_for_containers():
+
+    print("[*] Waiting for containers to become ready...")
+
+    timeout = 180
+    start = time.time()
+
+    while True:
+
+        result = subprocess.run(
+            "docker ps --filter 'name=socks-batch' --format '{{.Names}}'",
+            shell=True,
+            capture_output=True,
+            text=True
+        )
+
+        running = result.stdout.strip().splitlines()
+
+        if len(running) == CONTAINER_COUNT:
+            print(f"[+] All {CONTAINER_COUNT} containers running")
+            break
+
+        if time.time() - start > timeout:
+            raise RuntimeError("Timeout waiting for containers")
+
+        print(f"[*] Containers running: {len(running)}/{CONTAINER_COUNT}")
+        time.sleep(3)
+
+    print("[*] Allowing services to finish initialization...\n")
+    time.sleep(10)
 
 # -------------------------------
 # MAIN PIPELINE
@@ -360,9 +412,11 @@ def main():
 
     global IP_ADDRESS
 
-    print("\n==============================")
-    print(" SOCKS5 CLUSTER DEPLOYMENT ")
-    print("==============================\n")
+    print()
+    print("=" * 32)
+    print(" SOCKS5 CLUSTER DEPLOYMENT")
+    print("=" * 32)
+    print()
 
     try:
 
@@ -381,9 +435,7 @@ def main():
 
         launch_containers(credentials)
 
-        print(f"\n[*] Waiting for initialization ({INITIALIZATION_TIME}s)...\n")
-
-        time.sleep(INITIALIZATION_TIME)
+        wait_for_containers()
 
         verify_proxies(credentials)
 
