@@ -6,18 +6,19 @@ import time
 import urllib.request
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
+import itertools
 
 # -------------------------------
 # ENV LOADER
 # -------------------------------
 
+
 def load_env(env_file="cluster.env"):
-    config = {}
+    env_config = {}
 
     if not os.path.exists(env_file):
         print(f"[!] Config file '{env_file}' not found. Using defaults.")
-        return config
+        return env_config
 
     with open(env_file) as f:
         for line in f:
@@ -30,9 +31,9 @@ def load_env(env_file="cluster.env"):
                 continue
 
             key, value = line.split("=", 1)
-            config[key.strip()] = value.strip()
+            env_config[key.strip()] = value.strip()
 
-    return config
+    return env_config
 
 
 config = load_env()
@@ -56,7 +57,14 @@ STARTUP_DELAY = int(config.get("STARTUP_DELAY", 15))
 VERIFY_SERVICES = config.get(
     "VERIFY_SERVICES",
     "https://api.ipify.org"
-).split(",")
+)
+
+VERIFY_SERVICES = [s.strip() for s in VERIFY_SERVICES.split(",") if s.strip()]
+
+if not VERIFY_SERVICES:
+    VERIFY_SERVICES = ["https://api.ipify.org"]
+
+service_cycle = itertools.cycle(VERIFY_SERVICES)
 
 DOCKER_IMAGE = "dante-proxy"
 PROXY_OUTPUT = "working_proxies.txt"
@@ -337,7 +345,9 @@ def wait_for_ports():
 
 def test_single_proxy(proxy):
 
-    cmd = f"curl --socks5 {proxy} -s --max-time {VERIFY_TIMEOUT} {VERIFY_SERVICES[0]}"
+    service = next(service_cycle)
+
+    cmd = f"curl --socks5 {proxy} -s --max-time {VERIFY_TIMEOUT} {service}"
 
     result = subprocess.run(
         cmd,
@@ -413,6 +423,7 @@ def save_all_proxies(credentials):
 # SHOW RESULTS
 # -------------------------------
 
+
 def cluster_health_check(total_tested, working):
 
     failed = total_tested - working
@@ -437,6 +448,7 @@ def cluster_health_check(total_tested, working):
         print()
         print("[+] Cluster verification passed.\n")
 
+
 def deployment_summary():
 
     total = CONTAINER_COUNT * PROXIES_PER_CONTAINER
@@ -457,6 +469,7 @@ def deployment_summary():
 # -------------------------------
 # MAIN PIPELINE
 # -------------------------------
+
 
 def main():
 

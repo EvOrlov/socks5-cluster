@@ -10,7 +10,7 @@ if [ ! -s "$USERS_FILE" ]; then
 fi
 
 generate_config() {
-    echo "logoutput: /var/log/dante.log"
+    echo "logoutput: stdout"
     echo "resolveprotocol: tcp"
     echo "user.privileged: root"
     echo "user.notprivileged: nobody"
