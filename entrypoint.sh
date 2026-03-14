@@ -1,58 +1,51 @@
 #!/bin/bash
 
-set -e
-
-CONFIG_PATH="/etc/danted/danted.conf"
+CONFIG_PATH="/etc/danted.conf"
 USERS_FILE="/etc/danted/users.txt"
-PASSWD_FILE="/etc/danted/passwd"
 
-# Check users file
+# Проверка файла пользователей
 if [ ! -s "$USERS_FILE" ]; then
-    echo "[!] File $USERS_FILE is empty or missing."
+    echo "[!] Файл $USERS_FILE пуст или отсутствует."
     exit 1
 fi
 
-echo "[*] Preparing authentication database..."
-
-# Generate passwd file (login:password)
-while IFS=: read -r login password port; do
-    echo "$login:$password" >> "$PASSWD_FILE"
-done < "$USERS_FILE"
-
 generate_config() {
+    echo "logoutput: /var/log/dante.log"
+    echo "resolveprotocol: tcp"
+    echo "user.privileged: root"
+    echo "user.notprivileged: nobody"
+    echo "socksmethod: username"
+    echo "clientmethod: none"
 
-cat <<EOF
-logoutput: /var/log/dante.log
+    # Генерация internal и external
+    while IFS=: read -r login password port; do
+        [[ -z "$login" ]] && continue
+        adduser -D "$login" && echo "$login:$password" | chpasswd
+        echo "internal: 0.0.0.0 port = $port"
+    done < "$USERS_FILE"
 
-external: eth0
+    echo "external: eth0"
+    echo ""
 
-socksmethod: username
-user.notprivileged: nobody
-
+    cat <<EOF
 client pass {
-    from: 0.0.0.0/0 to: 0.0.0.0/0
+  from: 0.0.0.0/0 to: 0.0.0.0/0
+  log: connect disconnect error
 }
-
 socks pass {
-    from: 0.0.0.0/0 to: 0.0.0.0/0
-    command: bind connect udpassociate
+   from: 0.0.0.0/0 to: 0.0.0.0/0
+   command: bind connect udpassociate
+   log: error # connect disconnect iooperation
+}
+socks pass {
+  from: 0.0.0.0/0 to: 0.0.0.0/0
+  command: bindreply udpreply
+  log: error # connect disconnect iooperation
 }
 EOF
-
-# Add listening ports
-while IFS=: read -r login password port; do
-    if [ -n "$port" ]; then
-        echo "internal: 0.0.0.0 port = $port"
-    fi
-done < "$USERS_FILE"
-
 }
 
 generate_config > "$CONFIG_PATH"
-
-echo "[i] Dante config:"
-cat "$CONFIG_PATH"
-
-echo "[i] Starting Dante..."
+echo "[i] Запуск sockd с $(wc -l < "$USERS_FILE") пользователями"
 
 exec /usr/sbin/sockd -f "$CONFIG_PATH"
