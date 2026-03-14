@@ -5,7 +5,7 @@ USERS_FILE="/etc/danted/users.txt"
 
 # Проверка файла пользователей
 if [ ! -s "$USERS_FILE" ]; then
-    echo "[!] Файл $USERS_FILE пуст или отсутствует."
+    echo "[!] File $USERS_FILE empty or not exist."
     exit 1
 fi
 
@@ -46,6 +46,6 @@ EOF
 }
 
 generate_config > "$CONFIG_PATH"
-echo "[i] Запуск sockd с $(wc -l < "$USERS_FILE") пользователями"
+echo "[i] Starting sockd with $(wc -l < "$USERS_FILE") users"
 
 exec /usr/sbin/sockd -f "$CONFIG_PATH"

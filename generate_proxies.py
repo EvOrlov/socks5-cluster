@@ -2,7 +2,6 @@ import os
 import random
 import string
 import subprocess
-import socket
 import time
 import urllib.request
 import re
@@ -53,7 +52,6 @@ MEMORY_LIMIT = config.get("CONTAINER_MEMORY", "30m")
 CPU_LIMIT = config.get("CONTAINER_CPU", "0.15")
 
 STARTUP_DELAY = int(config.get("STARTUP_DELAY", 15))
-INITIALIZATION_TIME = int(config.get("INITIALIZATION_TIME", 60))
 
 VERIFY_SERVICES = config.get(
     "VERIFY_SERVICES",
@@ -63,11 +61,11 @@ VERIFY_SERVICES = config.get(
 DOCKER_IMAGE = "dante-proxy"
 PROXY_OUTPUT = "working_proxies.txt"
 
-IP_ADDRESS = None
-
 TEST_PROXIES_PER_CONTAINER = int(config.get("TEST_PROXIES_PER_CONTAINER", 10))
 VERIFY_TIMEOUT = int(config.get("VERIFY_TIMEOUT", 8))
 VERIFY_CONCURRENCY = int(config.get("VERIFY_CONCURRENCY", 50))
+
+IP_ADDRESS = None
 
 
 # -------------------------------
@@ -75,86 +73,27 @@ VERIFY_CONCURRENCY = int(config.get("VERIFY_CONCURRENCY", 50))
 # -------------------------------
 
 def detect_public_ip():
+
     print("[*] Detecting public IP...")
 
     for service in VERIFY_SERVICES:
+
         service = service.strip()
 
         try:
             with urllib.request.urlopen(service, timeout=5) as response:
+
                 ip = response.read().decode().strip()
 
                 if re.match(r"\d+\.\d+\.\d+\.\d+", ip):
+
                     print(f"[+] Public IP detected: {ip}")
                     return ip
 
         except Exception:
             continue
 
-    raise RuntimeError("Unable to detect public IP from verification services")
-
-
-def detect_local_ip():
-
-    try:
-        result = subprocess.run(
-            "hostname -I",
-            shell=True,
-            capture_output=True,
-            text=True
-        )
-
-        local_ip = result.stdout.strip().split()[0]
-        print(f"[+] Local interface IP: {local_ip}")
-        return local_ip
-
-    except Exception:
-        return "unknown"
-
-
-def check_nat(public_ip, local_ip):
-
-    if local_ip == "unknown":
-        return
-
-    if public_ip != local_ip:
-
-        print("\n[WARNING] Your server may be behind NAT.\n")
-
-        print(f"Public IP : {public_ip}")
-        print(f"Local IP  : {local_ip}\n")
-
-        print("Incoming connections to proxy ports may fail.")
-        print("Check if your hosting provider requires enabling a public IP.\n")
-
-
-# -------------------------------
-# PORT DISCOVERY
-# -------------------------------
-
-def is_port_free(port):
-
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(1)
-        return s.connect_ex(("127.0.0.1", port)) != 0
-
-
-def find_free_ports(count, start_port):
-
-    free_ports = []
-    current_port = start_port
-
-    while len(free_ports) < count:
-
-        if is_port_free(current_port):
-            free_ports.append(current_port)
-
-        current_port += 1
-
-        if current_port > 65535:
-            raise RuntimeError("Unable to allocate enough ports")
-
-    return free_ports
+    raise RuntimeError("Unable to detect public IP")
 
 
 # -------------------------------
@@ -165,7 +104,9 @@ def generate_credentials():
 
     print("[*] Generating proxy credentials...")
 
-    ports = find_free_ports(PROXIES_PER_CONTAINER * CONTAINER_COUNT, BASE_PORT)
+    total = PROXIES_PER_CONTAINER * CONTAINER_COUNT
+
+    ports = list(range(BASE_PORT, BASE_PORT + total))
 
     credentials = []
 
@@ -178,6 +119,8 @@ def generate_credentials():
         )
 
         credentials.append((username, password, port))
+
+    print(f"[+] Generated {len(credentials)} proxies")
 
     return credentials
 
@@ -202,7 +145,7 @@ def build_users_files(credentials):
 
 def cleanup_cluster():
 
-    print("[*] Cleaning previous cluster containers...")
+    print("[*] Cleaning previous containers...")
 
     result = subprocess.run(
         "docker ps -a --filter 'name=socks-batch' --format '{{.ID}}'",
@@ -220,11 +163,11 @@ def cleanup_cluster():
             shell=True
         )
 
-        print(f"[+] Removed {len(containers)} old containers")
+        print(f"[+] Removed {len(containers)} containers")
 
     else:
 
-        print("[*] No old containers found")
+        print("[*] No previous containers")
 
 
 # -------------------------------
@@ -241,8 +184,7 @@ def build_docker_image():
     )
 
     if result.returncode != 0:
-
-        raise RuntimeError("Docker image build failed")
+        raise RuntimeError("Docker build failed")
 
 
 # -------------------------------
@@ -258,13 +200,14 @@ def launch_containers(credentials):
         batch = credentials[i * PROXIES_PER_CONTAINER:(i + 1) * PROXIES_PER_CONTAINER]
 
         users_file = f"users_{i}.txt"
-
         container_name = f"socks-batch-{i+1}"
 
         cmd = (
-            f"docker run -d --name {container_name} "
+            f"docker run -d "
+            f"--name {container_name} "
             f"--cap-add=NET_RAW --cap-add=NET_ADMIN "
-            f"--memory={MEMORY_LIMIT} --cpus={CPU_LIMIT} "
+            f"--memory={MEMORY_LIMIT} "
+            f"--cpus={CPU_LIMIT} "
             f"--network host "
             f"-v $(pwd)/{users_file}:/etc/danted/users.txt "
             f"{DOCKER_IMAGE}"
@@ -275,8 +218,8 @@ def launch_containers(credentials):
         if result.returncode == 0:
 
             print(
-                f"[+] Container {i+1}/{CONTAINER_COUNT} "
-                f"started (ports {batch[0][2]}-{batch[-1][2]})"
+                f"[+] Container {i+1}/{CONTAINER_COUNT} started "
+                f"(ports {batch[0][2]}-{batch[-1][2]})"
             )
 
         else:
@@ -284,6 +227,64 @@ def launch_containers(credentials):
             print(f"[!] Failed to start container {i+1}")
 
         time.sleep(STARTUP_DELAY)
+
+
+# -------------------------------
+# WAIT FOR CONTAINERS READY
+# -------------------------------
+
+def wait_for_containers():
+
+    print("[*] Waiting for containers...")
+
+    timeout = 180
+    start = time.time()
+
+    while True:
+
+        result = subprocess.run(
+            "docker ps --filter 'name=socks-batch' --format '{{.Names}}'",
+            shell=True,
+            capture_output=True,
+            text=True
+        )
+
+        running = result.stdout.strip().splitlines()
+
+        if len(running) == CONTAINER_COUNT:
+
+            print(f"[+] {CONTAINER_COUNT} containers running")
+            break
+
+        if time.time() - start > timeout:
+
+            raise RuntimeError("Timeout waiting containers")
+
+        print(f"[*] Running: {len(running)}/{CONTAINER_COUNT}")
+
+        time.sleep(3)
+
+    print("[*] Waiting for proxy services initialization...\n")
+
+    time.sleep(10)
+
+
+# -------------------------------
+# PORT DIAGNOSTIC
+# -------------------------------
+
+def diagnostic_ports():
+
+    print("[*] Checking active SOCKS ports...")
+
+    result = subprocess.run(
+        "ss -lnt | grep -E ':%d' | wc -l" % BASE_PORT,
+        shell=True,
+        capture_output=True,
+        text=True
+    )
+
+    print(f"[*] Detected active ports: {result.stdout.strip()}")
 
 
 # -------------------------------
@@ -297,10 +298,12 @@ def test_single_proxy(proxy):
     result = subprocess.run(
         cmd,
         shell=True,
-        capture_output=True
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
     )
 
     return result.returncode == 0
+
 
 def verify_proxies(credentials):
 
@@ -311,6 +314,7 @@ def verify_proxies(credentials):
     for container_index in range(CONTAINER_COUNT):
 
         for i in range(TEST_PROXIES_PER_CONTAINER):
+
             index = container_index * PROXIES_PER_CONTAINER + i
 
             user, password, port = credentials[index]
@@ -345,49 +349,15 @@ def verify_proxies(credentials):
 
                 print(f"[-] ERROR: {proxy}")
 
-    print(f"[*] Checking {len(proxies)} proxies with {VERIFY_CONCURRENCY} workers\n")
+    print(f"\n[*] Checked {len(proxies)} proxies")
 
     with open(PROXY_OUTPUT, "w") as f:
 
         for proxy in working:
             f.write(proxy + "\n")
 
-    print(f"[*] All working proxies saved to {PROXY_OUTPUT}")
+    print(f"[+] Working proxies saved to {PROXY_OUTPUT}")
 
-# -------------------------------
-# WAIT FOR CONTAINERS READY
-# -------------------------------
-
-def wait_for_containers():
-
-    print("[*] Waiting for containers to become ready...")
-
-    timeout = 180
-    start = time.time()
-
-    while True:
-
-        result = subprocess.run(
-            "docker ps --filter 'name=socks-batch' --format '{{.Names}}'",
-            shell=True,
-            capture_output=True,
-            text=True
-        )
-
-        running = result.stdout.strip().splitlines()
-
-        if len(running) == CONTAINER_COUNT:
-            print(f"[+] All {CONTAINER_COUNT} containers running")
-            break
-
-        if time.time() - start > timeout:
-            raise RuntimeError("Timeout waiting for containers")
-
-        print(f"[*] Containers running: {len(running)}/{CONTAINER_COUNT}")
-        time.sleep(3)
-
-    print("[*] Allowing services to finish initialization...\n")
-    time.sleep(10)
 
 # -------------------------------
 # MAIN PIPELINE
@@ -398,19 +368,14 @@ def main():
     global IP_ADDRESS
 
     print()
-    print("=" * 32)
-    print(" SOCKS5 CLUSTER DEPLOYMENT")
-    print("=" * 32)
+    print("=" * 35)
+    print(" SOCKS5 CLUSTER DEPLOYMENT ")
+    print("=" * 35)
     print()
 
     try:
 
-        public_ip = detect_public_ip()
-        local_ip = detect_local_ip()
-
-        check_nat(public_ip, local_ip)
-
-        IP_ADDRESS = public_ip
+        IP_ADDRESS = detect_public_ip()
 
         credentials = generate_credentials()
 
@@ -421,6 +386,8 @@ def main():
         launch_containers(credentials)
 
         wait_for_containers()
+
+        diagnostic_ports()
 
         verify_proxies(credentials)
 
