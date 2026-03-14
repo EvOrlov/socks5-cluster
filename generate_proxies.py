@@ -273,18 +273,62 @@ def wait_for_containers():
 # PORT DIAGNOSTIC
 # -------------------------------
 
-def diagnostic_ports():
+def wait_for_ports():
 
-    print("[*] Checking active SOCKS ports...")
+    print("[*] Waiting for SOCKS ports to become active...")
 
-    result = subprocess.run(
-        "ss -lnt | grep -E ':%d' | wc -l" % BASE_PORT,
-        shell=True,
-        capture_output=True,
-        text=True
-    )
+    total_ports = PROXIES_PER_CONTAINER * CONTAINER_COUNT
+    expected_min = BASE_PORT
+    expected_max = BASE_PORT + total_ports - 1
 
-    print(f"[*] Detected active ports: {result.stdout.strip()}")
+    timeout = 300
+    start = time.time()
+
+    while True:
+
+        result = subprocess.run(
+            f"ss -lnt",
+            shell=True,
+            capture_output=True,
+            text=True
+        )
+
+        lines = result.stdout.splitlines()
+
+        count = 0
+
+        for line in lines:
+            parts = line.split()
+
+            if len(parts) < 4:
+                continue
+
+            addr = parts[3]
+
+            if ":" not in addr:
+                continue
+
+            port = addr.split(":")[-1]
+
+            if port.isdigit():
+
+                port = int(port)
+
+                if expected_min <= port <= expected_max:
+                    count += 1
+
+        print(f"[*] Active SOCKS ports: {count}/{total_ports}")
+
+        if count >= total_ports:
+            print("[+] All proxy ports are active\n")
+            return
+
+        if time.time() - start > timeout:
+            raise RuntimeError(
+                f"Timeout waiting for ports ({count}/{total_ports} active)"
+            )
+
+        time.sleep(5)
 
 
 # -------------------------------
@@ -350,6 +394,8 @@ def verify_proxies(credentials):
                 print(f"[-] ERROR: {proxy}")
 
     print(f"\n[*] Checked {len(proxies)} proxies")
+    print(f"[+] Working: {len(working)}")
+    print(f"[-] Failed : {len(proxies) - len(working)}")
 
     with open(PROXY_OUTPUT, "w") as f:
 
@@ -387,7 +433,7 @@ def main():
 
         wait_for_containers()
 
-        diagnostic_ports()
+        wait_for_ports()
 
         verify_proxies(credentials)
 
