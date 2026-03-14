@@ -1,22 +1,15 @@
 FROM alpine:latest
 
 # Install required packages
-RUN apk update && apk add --no-cache \
+RUN apk add --no-cache \
     dante-server \
     bash \
     iproute2 \
     net-tools \
-    shadow \
-    tcpdump \
-    bind-tools \
-    curl \
-    && rm -rf /var/cache/apk/*
+    curl
 
 # Copy entrypoint script
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
-
-# Mount the entire configuration directory
-VOLUME /etc/danted
 
 ENTRYPOINT ["/entrypoint.sh"]
