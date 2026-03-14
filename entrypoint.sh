@@ -2,6 +2,8 @@
 
 CONFIG_PATH="/etc/danted.conf"
 USERS_FILE="/etc/danted/users.txt"
+PASSWORD_FILE="/tmp/passwords.txt"
+: > "$PASSWORD_FILE"
 
 # Проверка файла пользователей
 if [ ! -s "$USERS_FILE" ]; then
@@ -16,16 +18,19 @@ generate_config() {
     echo "user.notprivileged: nobody"
     echo "socksmethod: username"
     echo "clientmethod: none"
-    echo "negotiate.max: 8"
-    echo "request.max: 16"
-    echo "io.max: 32"
 
     # Генерация internal и external
     while IFS=: read -r login password port; do
         [[ -z "$login" ]] && continue
-        adduser -D "$login" && echo "$login:$password" | chpasswd
+
+        adduser -D "$login"
+        echo "$login:$password" >> "$PASSWORD_FILE"
+
         echo "internal: 0.0.0.0 port = $port"
     done < "$USERS_FILE"
+
+    chpasswd < "$PASSWORD_FILE"
+    rm "$PASSWORD_FILE"
 
     echo "external: eth0"
     echo ""
