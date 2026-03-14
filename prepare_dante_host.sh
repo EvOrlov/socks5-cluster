@@ -2,7 +2,7 @@
 
 set -e
 
-echo "[*] Установка системных пакетов и Docker..."
+echo "[*] Installing system packages and Docker..."
 
 apt update && apt install -y \
   apt-transport-https \
@@ -16,7 +16,7 @@ apt update && apt install -y \
   unzip \
   wget
 
-# Добавление репозитория Docker
+# Add Docker repository
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
 
 echo \
@@ -24,18 +24,18 @@ echo \
   https://download.docker.com/linux/ubuntu \
   $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
 
-# Установка Docker
+# Install Docker
 apt update
 apt install -y docker-ce docker-ce-cli containerd.io
 
 systemctl enable docker
 systemctl start docker
 
-echo "[*] Docker установлен."
+echo "[*] Docker installed successfully."
 
-# ---------- НАСТРОЙКА DOCKER ----------
+# ---------- DOCKER SETTINGS ----------
 
-echo "[*] Настройка /etc/docker/daemon.json..."
+echo "[*] Configuring /etc/docker/daemon.json..."
 
 mkdir -p /etc/docker
 
@@ -56,12 +56,12 @@ cat > /etc/docker/daemon.json <<EOF
 }
 EOF
 
-echo "[*] Перезапуск Docker с новыми параметрами..."
+echo "[*] Restarting Docker with new parameters..."
 systemctl restart docker
 
-# ---------- НАСТРОЙКИ СИСТЕМЫ ----------
+# ---------- SYSTEM TUNING ----------
 
-echo "[*] Применение системных лимитов и сетевых параметров..."
+echo "[*] Applying system limits and network parameters..."
 
 cat >> /etc/sysctl.conf <<EOF
 
@@ -75,7 +75,7 @@ EOF
 
 sysctl -p
 
-# Ограничения на уровне PAM
+# PAM-level limits
 cat > /etc/security/limits.d/99-nofile.conf <<EOF
 * soft nofile 1048576
 * hard nofile 1048576
@@ -83,14 +83,14 @@ cat > /etc/security/limits.d/99-nofile.conf <<EOF
 * hard nproc 65535
 EOF
 
-# Для интерактивных сессий
+# For interactive sessions
 echo "ulimit -n 1048576" >> /etc/profile
 
-# ---------- SWAP (если RAM < 2.5 ГБ) ----------
+# ---------- SWAP (if RAM < 2.5 GB) ----------
 
 total_mem=$(grep MemTotal /proc/meminfo | awk '{print $2}')
 if [ "$total_mem" -lt 2500000 ]; then
-    echo "[*] Мало оперативной памяти — добавляю swap (1 ГБ)..."
+    echo "[*] Low RAM detected — adding 1GB swap..."
     fallocate -l 1G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=1024
     chmod 600 /swapfile
     mkswap /swapfile
@@ -98,8 +98,8 @@ if [ "$total_mem" -lt 2500000 ]; then
     echo '/swapfile none swap sw 0 0' >> /etc/fstab
 fi
 
-echo "[*] Проверка статуса Docker и swap:"
+echo "[*] Checking Docker and swap status:"
 docker info | grep -i "driver"
 free -m
 
-echo "[*] Подготовка хоста завершена успешно."
+echo "[*] Host preparation completed successfully."

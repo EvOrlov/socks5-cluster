@@ -393,17 +393,66 @@ def verify_proxies(credentials):
 
                 print(f"[-] ERROR: {proxy}")
 
-    print(f"\n[*] Checked {len(proxies)} proxies")
-    print(f"[+] Working: {len(working)}")
-    print(f"[-] Failed : {len(proxies) - len(working)}")
+    return len(proxies), len(working)
 
-    with open(PROXY_OUTPUT, "w") as f:
 
-        for proxy in working:
-            f.write(proxy + "\n")
+def save_all_proxies(credentials):
 
-    print(f"[+] Working proxies saved to {PROXY_OUTPUT}")
+    print("[*] Saving full proxy list...")
 
+    with open("all_proxies_user_pass.txt", "w") as f1, open("all_proxies_ip_port.txt", "w") as f2:
+
+        for user, password, port in credentials:
+
+            f1.write(f"{user}:{password}@{IP_ADDRESS}:{port}\n")
+            f2.write(f"{IP_ADDRESS}:{port}:{user}:{password}\n")
+
+    print(f"[+] Saved {len(credentials)} proxies")
+
+# -------------------------------
+# SHOW RESULTS
+# -------------------------------
+
+def cluster_health_check(total_tested, working):
+
+    failed = total_tested - working
+
+    print()
+    print("Cluster verification")
+    print("--------------------")
+
+    print(f"Tested proxies : {total_tested}")
+    print(f"Working        : {working}")
+    print(f"Failed         : {failed}")
+
+    if failed > 0:
+
+        print()
+        print("[WARNING] Some proxies failed verification.")
+        print("Cluster may not be fully initialized.")
+        print("Consider rerunning verification.\n")
+
+    else:
+
+        print()
+        print("[+] Cluster verification passed.\n")
+
+def deployment_summary():
+
+    total = CONTAINER_COUNT * PROXIES_PER_CONTAINER
+
+    print()
+    print("Cluster summary")
+    print("----------------")
+
+    print(f"Containers           : {CONTAINER_COUNT}")
+    print(f"Proxies per container: {PROXIES_PER_CONTAINER}")
+    print(f"Total proxies        : {total}")
+    print(f"Start port           : {BASE_PORT}")
+    print(f"Memory per container : {MEMORY_LIMIT}")
+    print(f"CPU per container    : {CPU_LIMIT}")
+
+    print()
 
 # -------------------------------
 # MAIN PIPELINE
@@ -435,7 +484,13 @@ def main():
 
         wait_for_ports()
 
-        verify_proxies(credentials)
+        save_all_proxies(credentials)
+
+        tested, working = verify_proxies(credentials)
+
+        cluster_health_check(tested, working)
+
+        deployment_summary()
 
     except Exception as e:
 

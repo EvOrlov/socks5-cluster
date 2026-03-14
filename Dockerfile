@@ -1,20 +1,16 @@
-FROM alpine:latest
+FROM alpine:3.19
 
-RUN apk update && apk add --no-cache \
+RUN apk add --no-cache \
     dante-server \
     bash \
     iproute2 \
     net-tools \
-    shadow \
-    tcpdump \
-    bind-tools \
-    curl \
-    && rm -rf /var/cache/apk/*
+    curl
 
 COPY entrypoint.sh /entrypoint.sh
+
 RUN chmod +x /entrypoint.sh
 
-# Точка монтирования для users.txt
-VOLUME /etc/danted/users.txt
+VOLUME ["/etc/danted"]
 
 ENTRYPOINT ["/entrypoint.sh"]
