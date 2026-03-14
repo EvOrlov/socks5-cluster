@@ -14,9 +14,6 @@ fi
 
 echo "[*] Preparing authentication database..."
 
-mkdir -p /etc/danted
-: > "$PASSWD_FILE"
-
 # Generate passwd file (login:password)
 while IFS=: read -r login password port; do
     echo "$login:$password" >> "$PASSWD_FILE"
