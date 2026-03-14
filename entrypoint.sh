@@ -16,6 +16,9 @@ generate_config() {
     echo "user.notprivileged: nobody"
     echo "socksmethod: username"
     echo "clientmethod: none"
+    echo "negotiate.max: 8"
+    echo "request.max: 16"
+    echo "io.max: 32"
 
     # Генерация internal и external
     while IFS=: read -r login password port; do
