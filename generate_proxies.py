@@ -466,6 +466,55 @@ def deployment_summary():
 
     print()
 
+
+def system_status_report():
+
+    print("=" * 35)
+    print(" SYSTEM STATUS ")
+    print("=" * 35)
+
+    commands = [
+        ("CPU load", "uptime"),
+        ("Memory usage", "free -h"),
+        ("Disk usage", "df -h /"),
+        ("Docker containers", "docker ps"),
+        ("Container resource usage", "docker stats --no-stream"),
+        ("Network sockets summary", "ss -s")
+    ]
+
+    for title, cmd in commands:
+
+        print()
+        print(f"[{title}]")
+        print("-" * len(title))
+
+        result = subprocess.run(
+            cmd,
+            shell=True,
+            capture_output=True,
+            text=True
+        )
+
+        print(result.stdout.strip())
+
+# -------------------------------
+# CLEAN FILES
+# -------------------------------
+
+
+def cleanup_users_files():
+
+    print("[*] Cleaning temporary users files...")
+
+    for i in range(CONTAINER_COUNT):
+
+        file_name = f"users_{i}.txt"
+
+        if os.path.exists(file_name):
+            os.remove(file_name)
+
+    print("[+] Temporary files removed")
+
 # -------------------------------
 # MAIN PIPELINE
 # -------------------------------
@@ -504,6 +553,13 @@ def main():
         cluster_health_check(tested, working)
 
         deployment_summary()
+
+        print("[*] Waiting for system stabilization...")
+        time.sleep(10)
+
+        system_status_report()
+
+        cleanup_users_files()
 
     except Exception as e:
 

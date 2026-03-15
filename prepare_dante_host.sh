@@ -67,7 +67,10 @@ cat >> /etc/sysctl.conf <<EOF
 
 # Dante proxy tuning
 net.core.somaxconn=4096
+net.core.netdev_max_backlog=65535
+net.ipv4.tcp_max_syn_backlog=8192
 net.ipv4.tcp_tw_reuse=1
+net.ipv4.tcp_fin_timeout=15
 net.ipv4.ip_local_port_range=1024 65535
 fs.file-max=2097152
 kernel.pid_max=65536
