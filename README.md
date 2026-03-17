@@ -6,9 +6,8 @@
 
 # SOCKS5 Cluster  
 #### Resource-Aware • Cheap VPS Friendly
-Deploy up to **3000 authenticated SOCKS5 proxies** on a low-cost VPS in **under 3 minutes**.
+## ⚡ 3000 SOCKS5 proxies in ~3 minutes on a $5 VPS
 
-**Fully automated, reproducible, and optimized** for minimal resources.
 
 A lightweight SOCKS5 proxy cluster designed to run on a **low-cost VPS (2 vCPU + 2GB RAM)**.
 
@@ -68,8 +67,8 @@ __socks5-cluster__
 ├── entrypoint.sh  
 ├── generate_proxies.py  
 ├── prepare_dante_host.sh  
-├── all_proxies_ip_port.txt **generated after deploy**  
-├── all_proxies_user_pass.txt **generated after deploy**
+├── all_proxies_ip_port.txt **# generated after deploy**  
+├── all_proxies_user_pass.txt **# generated after deploy**
 
 &nbsp;
 
@@ -248,9 +247,9 @@ python3 generate_proxies.py
 
 The script automatically:
 
-• removes old containers
-• rebuilds proxy containers
-• verifies proxy availability
+• removes old containers  
+• rebuilds proxy containers  
+• verifies proxy availability  
 
 &nbsp;
 
